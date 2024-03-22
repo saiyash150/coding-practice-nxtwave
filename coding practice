@@ -1,0 +1,116 @@
+const express = require('express')
+const {open} = require('sqlite')
+const sqlite3 = require('sqlite3')
+const app = express()
+app.use(express.json())
+const path = require('path')
+const dbpath = path.join(__dirname, 'todoApplication.db')
+let db = null
+
+const initialize = async () => {
+  try {
+    db = await open({
+      filename: dbpath,
+      driver: sqlite3.Database,
+    })
+    app.listen(3000, () => {
+      console.log('server started')
+    })
+  } catch (err) {
+    console.log(err.code)
+    process.exit(1)
+  }
+}
+
+initialize()
+
+//get todo status
+let isbothpresent = reqpar => {
+  return reqpar.priority !== undefined && reqpar.status !== undefined
+}
+let isPriority = reqpar => {
+  return reqpar.priority !== undefined
+}
+let isStatus = reqpar => {
+  return reqpar.status !== undefined
+}
+
+app.get('/todos/', async (request, response) => {
+  let {status, search_q = '', priority} = request.query
+
+  let query = ''
+  if (status !== undefined && priority !== undefined) {
+    query = `SELECT
+    *
+   FROM
+    todo WHERE
+    todo LIKE '%${search_q}%'
+    AND status = '${status}'
+    AND priority = '${priority}'
+   ;`
+  } else if (priority !== undefined) {
+    query = `SELECT * FROM todo WHERE todo LIKE '%${search_q}%' AND priority='${priority}'`
+  } else if (status !== undefined) {
+    query = `SELECT * FROM todo WHERE todo LIKE '%${search_q}%' AND status='${status}'`
+  } else {
+    query = `SELECT * FROM todo  WHERE todo LIKE '%${search_q}%'`
+  }
+
+  let submit = await db.all(query)
+  response.send(submit)
+})
+
+//get todo specific
+app.get('/todos/:todoId/', async (request, response) => {
+  let {todoId} = request.params
+  let query = `SELECT * FROM todo WHERE id =${todoId}`
+  let submit = await db.get(query)
+  response.send(submit)
+})
+
+//post todo
+app.post('/todos/', async (request, response) => {
+  let {id, todo, priority, status} = request.body
+  let query = `INSERT INTO todo(id,todo,priority,status)
+  VALUES(${id},'${todo}','${priority}','${status}')`
+  let submit = await db.run(query)
+  response.send('Todo Successfully Added')
+})
+//put
+
+app.put('/todos/:todoId/', async (request, response) => {
+  let {todoId} = request.params
+
+  let {todo, priority, status} = request.query
+  let query = ''
+
+  if (status !== undefined) {
+    query = `UPDATE todo
+               SET status='${status}'
+               WHERE id=${todoId}`
+    await db.run(query)
+    response.send('Status Updated')
+  } else if (priority !== undefined) {
+    query = `UPDATE todo
+               SET priority='${priority}'
+               WHERE id=${todoId}`
+    await db.run(query)
+    response.send('Priority Updated')
+  } else if (todo !== undefined) {
+    query = `UPDATE todo
+               SET todo='${todo}'
+               WHERE id=${todoId}`
+    await db.run(query)
+    response.send('Todo Updated')
+  }
+})
+
+//delete
+app.delete('/todos/:todoId/', async (request, response) => {
+  let {todoId} = request.params
+  let query = `DELETE FROM todo
+  WHERE id=${todoId}`
+  let submit = await db.run(query)
+  response.send('Todo Deleted')
+})
+module.exports = app
