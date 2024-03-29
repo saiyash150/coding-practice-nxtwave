@@ -1,11 +1,14 @@
 const express = require('express')
+const app = express()
 const {open} = require('sqlite')
 const sqlite3 = require('sqlite3')
-const app = express()
-app.use(express.json())
+const format = require('date-fns/format')
 const path = require('path')
+const toDate = require('date-fns/toDate')
+const isValid = require('date-fns/isValid')
 const dbpath = path.join(__dirname, 'todoApplication.db')
 let db = null
+app.use(express.json())
 
 const initialize = async () => {
   try {
@@ -14,103 +17,230 @@ const initialize = async () => {
       driver: sqlite3.Database,
     })
     app.listen(3000, () => {
-      console.log('server started')
+      console.log('server started...')
     })
   } catch (err) {
     console.log(err.code)
     process.exit(1)
   }
 }
-
 initialize()
 
-//get todo status
-let isbothpresent = reqpar => {
-  return reqpar.priority !== undefined && reqpar.status !== undefined
-}
-let isPriority = reqpar => {
-  return reqpar.priority !== undefined
-}
-let isStatus = reqpar => {
-  return reqpar.status !== undefined
-}
-
-app.get('/todos/', async (request, response) => {
-  let {status, search_q = '', priority} = request.query
-
-  let query = ''
-  if (status !== undefined && priority !== undefined) {
-    query = `SELECT
-    *
-   FROM
-    todo WHERE
-    todo LIKE '%${search_q}%'
-    AND status = '${status}'
-    AND priority = '${priority}'
-   ;`
-  } else if (priority !== undefined) {
-    query = `SELECT * FROM todo WHERE todo LIKE '%${search_q}%' AND priority='${priority}'`
-  } else if (status !== undefined) {
-    query = `SELECT * FROM todo WHERE todo LIKE '%${search_q}%' AND status='${status}'`
-  } else {
-    query = `SELECT * FROM todo  WHERE todo LIKE '%${search_q}%'`
+const checkRequire = async (request, response, next) => {
+  const {category, priority, status, date} = request.query
+  const {todoId} = request.params
+  if (status !== undefined) {
+    if (statusvalues.includes(status) === true) {
+      request.status = status
+    } else {
+      response.status(400)
+      response.send('Invalid Todo Status')
+      return
+    }
   }
+  if (priority !== undefined) {
+    if (priorityvalues.includes(priority) === true) {
+      request.priority = priority
+    } else {
+      response.status(400)
+      response.send('Invalid Todo Priority')
+      return
+    }
+  }
+  if (category !== undefined) {
+    if (categoryvalues.includes(category) === true) {
+      request.category = category
+    } else {
+      response.status(400)
+      response.send('Invalid Todo Category')
+      return
+    }
+  }
+
+  try {
+    if (date !== undefined) {
+      let myDate = new Date(date)
+      let modate = format(myDate, 'yyyy-MM-dd')
+
+      let res = await isValid(myDate)
+      if (res === true) {
+        request.date = modate
+      } else {
+        response.status(400)
+        response.send('Invalid Due Date')
+      }
+    }
+  } catch (err) {
+    response.status(400)
+    response.send('Invalid Due Date')
+  }
+
+  request.todoId = todoId
+  next()
+}
+
+const checkbody = async (request, response, next) => {
+  const {category, todo, priority, status, dueDate} = request.body
+  const {todoId} = request.params
+  if (status !== undefined) {
+    if (statusvalues.includes(status) === true) {
+      request.status = status
+    } else {
+      response.status(400)
+      response.send('Invalid Todo Status')
+      return
+    }
+  }
+  if (priority !== undefined) {
+    if (priorityvalues.includes(priority) === true) {
+      request.priority = priority
+    } else {
+      response.status(400)
+      response.send('Invalid Todo Priority')
+      return
+    }
+  }
+  if (category !== undefined) {
+    if (categoryvalues.includes(category) === true) {
+      request.category = category
+    } else {
+      response.status(400)
+      response.send('Invalid Todo Category')
+      return
+    }
+  }
+
+  try {
+    if (dueDate !== undefined) {
+      let myDate = new Date(dueDate)
+      let modate = format(myDate, 'yyyy-MM-dd')
+
+      let res = await isValid(myDate)
+      if (res === true) {
+        request.date = modate
+      } else {
+        response.status(400)
+        response.send('Invalid Due Date')
+      }
+    }
+  } catch (err) {
+    response.status(400)
+    response.send('Invalid Due Date')
+  }
+
+  request.todoId = todoId
+  request.todo = todo
+  next()
+}
+
+let priorityvalues = ['HIGH', 'MEDIUM', 'LOW']
+let statusvalues = ['TO DO', 'IN PROGRESS', 'DONE']
+let categoryvalues = ['WORK', 'HOME', 'LEARNING']
+
+app.get('/todos/', checkRequire, async (request, response) => {
+  let {status = '', category = '', priority = ''} = request
+  let {search_q = ''} = request.query
+  console.log(status)
+  let query = `SELECT id,todo,priority,status,category,due_date as dueDate FROM todo WHERE todo LIKE "%${search_q}%" 
+               AND status LIKE "%${status}%" AND priority LIKE '%${priority}%' AND category LIKE '%${category}%'`
 
   let submit = await db.all(query)
   response.send(submit)
 })
 
-//get todo specific
 app.get('/todos/:todoId/', async (request, response) => {
   let {todoId} = request.params
-  let query = `SELECT * FROM todo WHERE id =${todoId}`
+  let query = `SELECT  id,todo,priority,status,category,due_date as dueDate FROM todo WHERE id=${todoId}`
   let submit = await db.get(query)
   response.send(submit)
 })
 
-//post todo
-app.post('/todos/', async (request, response) => {
-  let {id, todo, priority, status} = request.body
-  let query = `INSERT INTO todo(id,todo,priority,status)
-  VALUES(${id},'${todo}','${priority}','${status}')`
-  let submit = await db.run(query)
-  response.send('Todo Successfully Added')
-})
-//put
+//get date
+app.get('/agenda/', checkRequire, async (request, response) => {
+  let {date} = request
 
-app.put('/todos/:todoId/', async (request, response) => {
-  let {todoId} = request.params
+  console.log(date)
+  let query = `SELECT  id,todo,priority,status,category,due_date as dueDate FROM todo WHERE due_date='${date}'`
 
-  let {todo, priority, status} = request.query
-  let query = ''
-
-  if (status !== undefined) {
-    query = `UPDATE todo
-               SET status='${status}'
-               WHERE id=${todoId}`
-    await db.run(query)
-    response.send('Status Updated')
-  } else if (priority !== undefined) {
-    query = `UPDATE todo
-               SET priority='${priority}'
-               WHERE id=${todoId}`
-    await db.run(query)
-    response.send('Priority Updated')
-  } else if (todo !== undefined) {
-    query = `UPDATE todo
-               SET todo='${todo}'
-               WHERE id=${todoId}`
-    await db.run(query)
-    response.send('Todo Updated')
-  }
+  let submit = await db.all(query)
+  response.send(submit)
 })
 
 //delete
 app.delete('/todos/:todoId/', async (request, response) => {
   let {todoId} = request.params
-  let query = `DELETE FROM todo
-  WHERE id=${todoId}`
+  let query = `DELETE FROM todo WHERE id=${todoId}`
   let submit = await db.run(query)
   response.send('Todo Deleted')
 })
+//post
+app.post('/todos/', checkbody, async (request, response) => {
+  let {todo, priority, status, category, dueDate} = request
+  let {id} = request.body
+
+  let query = `INSERT INTO todo (id,todo,priority,status,category,due_date)
+  VALUES(${id},'${todo}','${priority}','${status}','${category}','${dueDate}')`
+  let submit = await db.run(query)
+  response.send('Todo Successfully Added')
+})
+
+//put
+app.put('/todos/:todoId', checkbody, async (request, response) => {
+  let {todoId} = request
+
+  let V = request
+  let update = null
+
+  switch (true) {
+    case V.status !== undefined:
+      update = 'Status'
+
+      break
+    case V.priority !== undefined:
+      update = 'Priority'
+
+      break
+    case V.todo !== undefined:
+      update = 'Todo'
+
+      break
+    case V.category !== undefined:
+      update = 'Category'
+
+      break
+    case V.dueDate !== undefined:
+      update = 'Due Date'
+      break
+  }
+
+  let prevquery = `SELECT * FROM todo WHERE id=${todoId}`
+  let prevalue = await db.get(prevquery)
+  let {
+    status = prevalue.status,
+    priority = prevalue.priority,
+    category = prevalue.category,
+    todo = prevalue.todo,
+    dueDate = prevalue.due_date,
+  } = request.body
+  let query = `
+            UPDATE
+                todo
+            SET 
+                status='${status}',
+                category='${category}',
+                todo='${todo}',
+                due_date='${dueDate}',
+
+
+
+                priority = '${priority}'
+            WHERE 
+                id = ${todoId}     
+        ;`
+  await db.run(query)
+  response.send(`${update} Updated`)
+})
 module.exports = app
+
+
+  
