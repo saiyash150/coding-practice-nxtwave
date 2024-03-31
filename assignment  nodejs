@@ -1,0 +1,290 @@
+const express = require('express')
+const app = express()
+const {open} = require('sqlite')
+const sqlite3 = require('sqlite3')
+const path = require('path')
+const dbpath = path.join(__dirname, 'twitterClone.db')
+app.use(express.json())
+let jwt = require('jsonwebtoken')
+const bcrypt = require('bcrypt')
+let db = null
+
+const initialize = async () => {
+  try {
+    db = await open({
+      filename: dbpath,
+      driver: sqlite3.Database,
+    })
+
+    app.listen(3000, () => {
+      console.log('server started...')
+    })
+  } catch (err) {
+    console.log(err.message)
+    process.exit(1)
+  }
+}
+initialize()
+
+//register
+app.post('/register/', async (request, response) => {
+  let {username, password, name, gender} = request.body
+  let check = `SELECT * FROM user where username='${username}'`
+  let checkdata = await db.get(check)
+  if (checkdata === undefined) {
+    if (password.length < 6) {
+      response.status(400)
+      response.send('Password is too short')
+    } else {
+      let hashy = await bcrypt.hash(password, 10)
+      let query = `INSERT INTO user (username,password,name,gender)
+            VALUES('${username}','${hashy}','${name}','${gender}')`
+      let submit = await db.run(query)
+      response.status(200)
+      response.send('User created successfully')
+    }
+  } else {
+    response.status(400)
+    response.send('User already exists')
+  }
+})
+
+const authenticate = (request, response, next) => {
+  let token
+
+  let head = request.headers['authorization']
+  if (head !== undefined) {
+    token = head.split(' ')[1]
+  }
+  if (token !== undefined) {
+    jwt.verify(token, 'secrets', async (error, payload) => {
+      if (error) {
+        response.status(401)
+        response.send('Invalid JWT Token')
+      } else {
+        request.body = {payload}
+        request.payload = payload
+        next()
+      }
+    })
+  } else {
+    response.status(401)
+    response.send('Invalid JWT Token')
+  }
+}
+//login
+app.post('/login/', async (request, response) => {
+  let {username, password} = request.body
+  let checkquery = `SELECT * FROM user WHERE username='${username}'`
+  let check = await db.get(checkquery)
+  if (check === undefined) {
+    response.status(400)
+    response.send('Invalid user')
+  } else {
+    let checkpass = await bcrypt.compare(password, check.password)
+    if (checkpass === true) {
+      let payload = username
+      let jwtToken = jwt.sign(payload, 'secrets')
+      response.send({jwtToken})
+    } else {
+      response.status(400)
+      response.send('Invalid password')
+    }
+  }
+})
+
+//get feed latest
+app.get('/user/tweets/feed/', authenticate, async (request, response) => {
+  let {payload} = request.body
+  let log = `select * from user where username='${payload}'`
+  let getlogger = await db.get(log)
+  let logger = getlogger.user_id
+
+  let query = `SELECT username,tweet,date_time as dateTime FROM (user inner join follower on follower.following_user_id=user.user_id) as T
+  inner join tweet on T.following_user_id=tweet.user_id where T.follower_user_id=${logger}
+  order by date_time desc
+  limit 4 offset 0;
+   `
+  let submit = await db.all(query)
+  response.send(submit)
+})
+
+//following people
+app.get('/user/following/', authenticate, async (request, response) => {
+  let {payload} = request.body
+  let log = `select * from user where username='${payload}'`
+  let getlogger = await db.get(log)
+  let logger = getlogger.user_id
+
+  let query = `SELECT name FROM user inner join follower on following_user_id=user.user_id
+   where follower.follower_user_id=${logger}
+  
+  ;
+   `
+  let submit = await db.all(query)
+  response.send(submit)
+})
+
+//followers
+app.get('/user/followers/', authenticate, async (request, response) => {
+  let {payload} = request.body
+  let log = `select * from user where username='${payload}'`
+  let getlogger = await db.get(log)
+  let logger = getlogger.user_id
+
+  let query = `SELECT name FROM user inner join follower on user.user_id=follower.follower_user_id
+   where following_user_id=${logger}
+  
+  ;
+   `
+  let submit = await db.all(query)
+  response.send(submit)
+})
+
+//get tweet
+
+app.get('/tweets/:tweetId/', authenticate, async (request, response) => {
+  let {tweetId} = request.params
+
+  let {payload} = request
+  let log = `select * from user where username='${payload}'`
+  let getlogger = await db.get(log)
+  let logger = getlogger.user_id
+
+  let checkquery = `SELECT * FROM tweet WHERE tweet_id =${tweetId}`
+  let check = await db.get(checkquery)
+  let check_id = check.user_id
+
+  let followingquery = `SELECT name FROM user inner join follower on following_user_id=user.user_id
+   where follower.follower_user_id=${logger} AND follower.following_user_id=${check_id}`
+
+  let followcheck = await db.get(followingquery)
+
+  if (followcheck !== undefined) {
+    let query = `select tweet,count(like.tweet_id) as likes,count(reply.tweet_id) as replies,tweet.date_time as dateTime from like inner join tweet on like.tweet_id=tweet.tweet_id
+    inner join reply on like.tweet_id=reply.tweet_id where like.tweet_id=${tweetId}`
+    let names = await db.get(query)
+
+    response.send(names)
+  } else {
+    response.status(401)
+    response.send('Invalid Request')
+  }
+})
+
+//get likes
+app.get('/tweets/:tweetId/likes/', authenticate, async (request, response) => {
+  let {tweetId} = request.params
+
+  let {payload} = request.body
+  let log = `select * from user where username='${payload}'`
+  let getlogger = await db.get(log)
+  let logger = getlogger.user_id
+
+  let checkquery = `SELECT * FROM tweet WHERE tweet_id =${tweetId}`
+  let check = await db.get(checkquery)
+  let check_id = check.user_id
+
+  let followingquery = `SELECT name FROM user inner join follower on following_user_id=user.user_id
+   where follower.follower_user_id=${logger} AND follower.following_user_id=${check_id}`
+
+  let followcheck = await db.get(followingquery)
+
+  if (followcheck !== undefined) {
+    let query = `select user.username from like inner join tweet on like.tweet_id=tweet.tweet_id
+    inner join user on like.user_id=user.user_id where like.tweet_id=${tweetId}`
+    let names = await db.all(query)
+    let name = []
+
+    for (let i of names) {
+      name.push(i.username)
+    }
+    response.send({likes: name})
+  } else {
+    response.status(401)
+    response.send('Invalid Request')
+  }
+})
+
+//replies
+app.get(
+  '/tweets/:tweetId/replies/',
+  authenticate,
+  async (request, response) => {
+    let {tweetId} = request.params
+
+    let {payload} = request.body
+    let log = `select * from user where username='${payload}'`
+    let getlogger = await db.get(log)
+    let logger = getlogger.user_id
+
+    let checkquery = `SELECT * FROM tweet WHERE tweet_id =${tweetId}`
+    let check = await db.get(checkquery)
+    let check_id = check.user_id
+
+    let followingquery = `SELECT name FROM user inner join follower on following_user_id=user.user_id
+   where follower.follower_user_id=${logger} AND follower.following_user_id=${check_id}`
+
+    let followcheck = await db.get(followingquery)
+
+    if (followcheck !== undefined) {
+      let query = `select user.name,reply from reply inner join tweet on reply.tweet_id=tweet.tweet_id
+    inner join user on reply.user_id=user.user_id where tweet.tweet_id=${tweetId}`
+      let names = await db.all(query)
+      let name = []
+
+      for (let i of names) {
+        name.push(i)
+      }
+      console.log(names)
+      response.send({replies: name})
+    } else {
+      response.status(401)
+      response.send('Invalid Request')
+    }
+  },
+)
+
+//get tweets
+app.get('/user/tweets/', authenticate, async (request, response) => {
+  let {payload} = request
+  let log = `select * from user where username='${payload}'`
+  let getlogger = await db.get(log)
+  let logger = getlogger.user_id
+
+  let query = `select tweet.tweet,count(like.tweet_id) as likes,count(reply.tweet_id) as replies,tweet.date_time as dateTime from (tweet inner join user on tweet.user_id=user.user_id) as T
+    inner join like on T.tweet_id=like.tweet_id inner join reply on T.tweet_id =reply.tweet_id 
+    where tweet.user_id=${logger} group by tweet.tweet_id
+    `
+  let submit = await db.all(query)
+  response.send(submit)
+})
+//post
+app.post('/user/tweets/', authenticate, async (request, response) => {
+  let {tweet} = request.body
+  let query = `insert into tweet(tweet)
+  values('${tweet}')`
+  let submit = await db.run(query)
+  response.send('Created a Tweet')
+})
+//delete
+app.delete('/tweets/:tweetId/', authenticate, async (request, response) => {
+  let {payload} = request.body
+  let log = `select * from user where username='${payload}'`
+  let getlogger = await db.get(log)
+  let logger = getlogger.user_id
+
+  let {tweetId} = request.params
+  let checkquery = `select * from tweet where tweet_id=${tweetId}`
+  let check = await db.get(checkquery)
+  if (check.user_id === logger) {
+    let query = `DELETE FROM tweet where tweet_id=${tweetId}`
+    let submit = await db.run(query)
+    response.status(200)
+    response.send('Tweet Removed')
+  } else {
+    response.status(401)
+    response.send('Invalid Request')
+  }
+})
+module.exports = app
